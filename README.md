@@ -1,6 +1,6 @@
 # enpopa-data
 
-Prepared wind for the [enpopa](https://github.com/k111git/enpopa) app, published on GitHub Pages at
+Prepared wind and waves for the [enpopa](https://github.com/k111git/enpopa) app, published on GitHub Pages at
 <https://k111git.github.io/enpopa-data/>.
 
 The app's area is small, but Open-Meteo's files each cover all of France or Europe for one forecast hour,
@@ -17,7 +17,8 @@ The values are the same as on Open-Meteo, at the steps it stores them in:
 
 - **Wind** (AROME HD, ICON-EU): u, v and gusts at 10 m, 0.1 m/s.
 - **Waves** (EWAM, runs at 00 and 12 UTC to +78 h): height (0.02 m), period (0.05 s) and direction they come from (1°), for the
-  total sea, the swell and the wind waves. Land is nodata. The app doesn't use it yet.
+  total sea, the swell and the wind waves. Land is nodata. The app reads the total sea (the first three variables) for
+  its wave layer, routing and calibration; swell and wind waves aren't used yet.
 
 ## How it works
 
