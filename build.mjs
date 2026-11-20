@@ -1,11 +1,13 @@
 // Prepares the wind for the enpopa app: for each model, finds the newest complete run on
 // Open-Meteo's open-data bucket, cuts the app's area out of every forecast hour, and writes
 // one small file per hour plus a land mask and a manifest (latest.json) to site/, which the
-// workflow publishes on GitHub Pages.
+// workflow publishes on GitHub Pages. Besides the wind models it does DWD's EWAM wave model
+// (wave, swell and wind-wave height, period and direction), for the app to use later.
 //
 // File format (version 1), for each hour <model>/<run>/<valid>.bin:
 //   raw deflate of, for each variable in turn, the int16 grid (ny rows south to north, nx
-//   columns west to east, value = round(x * scale), nodata = -32768) coded as
+//   columns west to east, value = round(x * scale) with the variable's scale from the
+//   manifest, nodata = -32768, e.g. land in the wave model) coded as
 //   d = v - (left + below - below-left)  (the left or below neighbour alone on the first
 //   column/row, 0 at the corner), zigzag-mapped to uint16, low bytes of all cells then high bytes.
 // mask.bin: raw deflate of ny * nx bytes, 1 = water.
@@ -20,26 +22,37 @@ import { BlockCacheBackend, LruBlockCache, OmDataType, OmFileReader, OmHttpBacke
 const SITE = path.resolve(process.argv[2] || 'site');
 const S3_ROOT = 'https://openmeteo.s3.amazonaws.com';
 const FORMAT = 1;
-const SCALE = 10;          // 0.1 m/s
 const NODATA = -32768;
-const VARIABLES = ['wind_u_component_10m', 'wind_v_component_10m', 'wind_gusts_10m'];
+// wind in 0.1 m/s, as Open-Meteo stores it
+const WIND = ['wind_u_component_10m', 'wind_v_component_10m', 'wind_gusts_10m'].map((name) => ({ name, scale: 10 }));
+// EWAM's own steps: height 0.02 m, period 0.05 s, direction 1° (where the waves come from)
+const WAVES = ['wave', 'swell_wave', 'wind_wave'].flatMap((w) => [
+  { name: `${w}_height`, scale: 50 }, { name: `${w}_period`, scale: 20 }, { name: `${w}_direction`, scale: 1 },
+]);
 // Must match WINDOW in the app's web/engine/models.js; the app checks rows and cols in the
 // manifest and reads Open-Meteo directly when they differ.
 const WINDOW = [38.4, 44.0, 0.0, 10.0];  // south, north, west, east
 const KEEP_RUNS = 2;       // per model: the newest and the one before, for downloads in progress
 const PARALLEL = 6;        // hours read at once
 
+const round6 = (x) => Math.round(x * 1e6) / 1e6;
+// dlat/dlon: grid spacing (the same unless the grid isn't square, like EWAM's)
 function model(def) {
-  const { srcLat0, srcLon0, res, srcNy, srcNx } = def;
+  const { srcLat0, srcLon0, dlat, dlon = dlat, srcNy, srcNx } = def;
   const [s, n, w, e] = WINDOW;
-  const rows = [Math.max(0, Math.round((s - srcLat0) / res)), Math.min(srcNy, Math.round((n - srcLat0) / res) + 1)];
-  const cols = [Math.max(0, Math.round((w - srcLon0) / res)), Math.min(srcNx, Math.round((e - srcLon0) / res) + 1)];
-  return { ...def, rows, cols, ny: rows[1] - rows[0], nx: cols[1] - cols[0] };
+  const rows = [Math.max(0, Math.round((s - srcLat0) / dlat)), Math.min(srcNy, Math.round((n - srcLat0) / dlat) + 1)];
+  const cols = [Math.max(0, Math.round((w - srcLon0) / dlon)), Math.min(srcNx, Math.round((e - srcLon0) / dlon) + 1)];
+  return {
+    mask: true, ...def, dlon, rows, cols, ny: rows[1] - rows[0], nx: cols[1] - cols[0],
+    lat0: round6(srcLat0 + rows[0] * dlat), lon0: round6(srcLon0 + cols[0] * dlon),
+  };
 }
 
 const MODELS = [
-  model({ key: 'arome-hd', source: 'meteofrance_arome_france_hd', srcLat0: 37.5, srcLon0: -12.0, res: 0.01, srcNy: 1791, srcNx: 2801 }),
-  model({ key: 'icon-eu', source: 'dwd_icon_eu', srcLat0: 29.5, srcLon0: -23.5, res: 0.0625, srcNy: 657, srcNx: 1377, runHours: [0, 6, 12, 18] }),
+  model({ key: 'arome-hd', source: 'meteofrance_arome_france_hd', variables: WIND, srcLat0: 37.5, srcLon0: -12.0, dlat: 0.01, srcNy: 1791, srcNx: 2801 }),
+  model({ key: 'icon-eu', source: 'dwd_icon_eu', variables: WIND, srcLat0: 29.5, srcLon0: -23.5, dlat: 0.0625, srcNy: 657, srcNx: 1377, runHours: [0, 6, 12, 18] }),
+  // runs at 00 and 12 UTC to +78 h; no land mask, land is nodata
+  model({ key: 'ewam', source: 'dwd_ewam', variables: WAVES, srcLat0: 30.0, srcLon0: -10.5, dlat: 0.05, dlon: 0.1, srcNy: 721, srcNx: 526, mask: false }),
 ];
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -78,7 +91,7 @@ async function getJson(url, missingOk = false) {
   });
 }
 
-const usable = (m, meta) => meta?.completed && VARIABLES.every((v) => meta.variables?.includes(v))
+const usable = (m, meta) => meta?.completed && m.variables.every((v) => meta.variables?.includes(v.name))
   && (!m.runHours || m.runHours.includes(new Date(parseTime(meta.reference_time) * 1000).getUTCHours()));
 
 // newest complete run at one of the model's run hours (the same choice the app makes)
@@ -135,13 +148,13 @@ function readFields(url, names, rows, cols) {
 
 // ---------------------------------------------------------------- encoding
 
-export function encode(fields, ny, nx) {
+export function encode(fields, ny, nx, scales) {
   const n = ny * nx, out = new Uint8Array(fields.length * 2 * n);
   fields.forEach((f, p) => {
-    const q = new Int16Array(n);
+    const q = new Int16Array(n), scale = scales[p];
     for (let k = 0; k < n; k++) {
       const v = f[k];
-      q[k] = v === v ? Math.max(-32767, Math.min(32767, Math.round(v * SCALE))) : NODATA;
+      q[k] = v === v ? Math.max(-32767, Math.min(32767, Math.round(v * scale))) : NODATA;
     }
     const base = p * 2 * n;
     for (let y = 0; y < ny; y++) {
@@ -172,7 +185,7 @@ async function buildModel(m, manifest) {
   let changed = false;
 
   const maskFile = path.join(dir, 'mask.bin');
-  if (!fs.existsSync(maskFile)) {
+  if (m.mask && !fs.existsSync(maskFile)) {
     const [height] = await readFields(`${S3_ROOT}/data/${m.source}/static/HSURF.om`, null, m.rows, m.cols);
     const water = new Uint8Array(height.length);
     for (let k = 0; k < height.length; k++) water[k] = height[k] === -999 ? 1 : 0;  // Open-Meteo marks water as -999
@@ -190,8 +203,8 @@ async function buildModel(m, manifest) {
       while (next < times.length) {
         const t = times[next++], file = path.join(runDir, `${stamp(t)}.bin`);
         if (fs.existsSync(file)) { bytes += fs.statSync(file).size; continue; }  // left by a cut-short build
-        const fields = await readFields(omUrl(m, run, t), VARIABLES, m.rows, m.cols);
-        const buf = encode(fields, m.ny, m.nx);
+        const fields = await readFields(omUrl(m, run, t), m.variables.map((v) => v.name), m.rows, m.cols);
+        const buf = encode(fields, m.ny, m.nx, m.variables.map((v) => v.scale));
         writeAtomic(file, buf);
         bytes += buf.length;
       }
@@ -213,8 +226,13 @@ async function buildModel(m, manifest) {
       changed = true;
     }
   }
+  const scales = m.variables.map((v) => v.scale);
   Object.assign(entry, {
-    rows: m.rows, cols: m.cols, ny: m.ny, nx: m.nx, variables: VARIABLES, scale: SCALE, nodata: NODATA, mask: 'mask.bin',
+    rows: m.rows, cols: m.cols, ny: m.ny, nx: m.nx, lat0: m.lat0, lon0: m.lon0, dlat: m.dlat, dlon: m.dlon,
+    variables: m.variables.map((v) => v.name), scales, nodata: NODATA,
+    // one scale for all variables (the wind models), as the app checks it
+    ...(scales.every((x) => x === scales[0]) ? { scale: scales[0] } : {}),
+    ...(m.mask ? { mask: 'mask.bin' } : {}),
   });
   return changed;
 }
@@ -238,10 +256,20 @@ async function main() {
     writeAtomic(file, JSON.stringify({
       format: FORMAT,
       generated: new Date().toISOString(),
-      attribution: 'Weather data by Open-Meteo.com (CC BY 4.0), from Météo-France AROME HD and DWD ICON-EU',
+      attribution: 'Weather data by Open-Meteo.com (CC BY 4.0), from Météo-France AROME HD, DWD ICON-EU and DWD EWAM',
       ...manifest,
     }));
     fs.writeFileSync(path.join(SITE, '.nojekyll'), '');
+  }
+  // publish also when the live site is behind, e.g. after a failed deploy or when Pages was
+  // only just switched on
+  if (!changed && process.env.PAGES_URL) {
+    const live = await fetch(`${process.env.PAGES_URL}/latest.json`, { cache: 'no-cache' })
+      .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    if (live?.generated !== readJson(file)?.generated) {
+      console.error('the published site is behind: publishing again');
+      changed = true;
+    }
   }
   console.log(`changed=${changed}`);
   if (errors.length && !changed) {
