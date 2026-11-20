@@ -1,7 +1,7 @@
 # Every 10 minutes: looks for new AROME HD, ICON-EU and EWAM (waves) runs on Open-Meteo, cuts the enpopa
 # area out of them (build.mjs) and, when something changed, publishes site/ on GitHub Pages.
 # site/ is carried from run to run in the Actions cache, so only new runs are built and the
-# previous run stays online for downloads in progress.
+# previous run stays online for downloads in progress. .
 name: Prepare wind
 
 on:
