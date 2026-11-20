@@ -2,7 +2,8 @@
 // Open-Meteo's open-data bucket, cuts the app's area out of every forecast hour, and writes
 // one small file per hour plus a land mask and a manifest (latest.json) to site/, which the
 // workflow publishes on GitHub Pages. Besides the wind models it does DWD's EWAM wave model
-// (wave, swell and wind-wave height, period and direction), for the app to use later.
+// (wave, swell and wind-wave height, period and direction); the app reads the first three, the
+// total sea, and checks their names and scales in the manifest (its web/engine/waves.js).
 //
 // File format (version 1), for each hour <model>/<run>/<valid>.bin:
 //   raw deflate of, for each variable in turn, the int16 grid (ny rows south to north, nx
