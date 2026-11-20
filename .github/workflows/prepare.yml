@@ -1,0 +1,71 @@
+# Every half hour: looks for new AROME HD and ICON-EU runs on Open-Meteo, cuts the enpopa
+# area out of them (build.mjs) and, when something changed, publishes site/ on GitHub Pages.
+# site/ is carried from run to run in the Actions cache, so only new runs are built and the
+# previous run stays online for downloads in progress.
+name: Prepare wind
+
+on:
+  schedule:
+    - cron: '11,41 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: prepare
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write   # re-enabling this workflow, below
+    outputs:
+      changed: ${{ steps.build.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache/restore@v4
+        with:
+          path: site
+          key: site-${{ github.run_id }}
+          restore-keys: site-
+      - id: build
+        run: node build.mjs site >> "$GITHUB_OUTPUT"
+      - if: steps.build.outputs.changed == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: site
+          key: site-${{ github.run_id }}-${{ github.run_attempt }}
+      - if: steps.build.outputs.changed == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      # GitHub turns off scheduled workflows after 60 days without commits; enabling it again
+      # once a day restarts that count
+      - if: github.event_name == 'schedule' && steps.build.outcome != 'skipped'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(date -u +%H%M)" \< "0041" ]; then
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/prepare.yml/enable"
+          fi
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

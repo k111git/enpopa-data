@@ -1,0 +1,8 @@
+{
+  "name": "enpopa-data",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "22.x" },
+  "scripts": { "build": "node build.mjs site" },
+  "dependencies": { "@openmeteo/file-reader": "0.0.20" }
+}
