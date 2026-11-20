@@ -1,4 +1,4 @@
-# Every half hour: looks for new AROME HD, ICON-EU and EWAM (waves) runs on Open-Meteo, cuts the enpopa
+# Every 10 minutes: looks for new AROME HD, ICON-EU and EWAM (waves) runs on Open-Meteo, cuts the enpopa
 # area out of them (build.mjs) and, when something changed, publishes site/ on GitHub Pages.
 # site/ is carried from run to run in the Actions cache, so only new runs are built and the
 # previous run stays online for downloads in progress.
@@ -6,7 +6,7 @@ name: Prepare wind
 
 on:
   schedule:
-    - cron: '11,41 * * * *'
+    - cron: '3,13,23,33,43,53 * * * *'
   workflow_dispatch:
 
 concurrency:
@@ -54,7 +54,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "$(date -u +%H%M)" \< "0041" ]; then
+          if [ "$(date -u +%H%M)" \< "0013" ]; then
             gh api -X PUT "repos/${{ github.repository }}/actions/workflows/prepare.yml/enable"
           fi
 

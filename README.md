@@ -21,7 +21,8 @@ The values are the same as on Open-Meteo, at the steps it stores them in:
 
 ## How it works
 
-`.github/workflows/prepare.yml` runs every half hour (GitHub often starts scheduled jobs a few minutes late):
+`.github/workflows/prepare.yml` runs every 10 minutes (GitHub often starts scheduled jobs a few minutes late, and
+under load may skip one):
 
 1. `build.mjs` looks up the newest complete run of each model (AROME HD, ICON-EU, EWAM) on Open-Meteo's open-data bucket.
 2. For a run it hasn't built yet, it reads the area (38.4–44.0° N, 0–10° E) out of every hour's `.om` file and writes one
