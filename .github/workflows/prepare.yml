@@ -1,4 +1,4 @@
-# Every 10 minutes: looks for new AROME HD, ICON-EU and EWAM (waves) runs on Open-Meteo,
+# Every 10 minutes: looks for new AROME HD, ICON-EU, EWAM (waves) and SMOC (currents) runs on Open-Meteo,
 # cuts the enpopa area out of them (build.mjs) and, when something changed,
 # publishes site/ on GitHub Pages.
 name: Prepare wind

@@ -3,7 +3,9 @@
 // one small file per hour plus a land mask and a manifest (latest.json) to site/, which the
 // workflow publishes on GitHub Pages. Besides the wind models it does DWD's EWAM wave model
 // (wave, swell and wind-wave height, period and direction); the app reads the first three, the
-// total sea, and checks their names and scales in the manifest (its web/engine/waves.js).
+// total sea, and checks their names and scales in the manifest (its web/engine/waves.js). And it
+// does the surface currents of Copernicus Marine's global SMOC (Mercator Ocean, 1/12°, with tides and
+// wave drift), which Open-Meteo mirrors as meteofrance_currents (the app's web/engine/currents.js).
 //
 // File format (version 1), for each hour <model>/<run>/<valid>.bin:
 //   raw deflate of, for each variable in turn, the int16 grid (ny rows south to north, nx
@@ -14,6 +16,7 @@
 // mask.bin: raw deflate of ny * nx bytes, 1 = water.
 //
 // Usage: node build.mjs [site dir]   (default: site). Prints changed=true|false for the workflow.
+// MODELS=smoc,ewam node build.mjs site builds only those models (the others stay as they are).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,6 +33,8 @@ const WIND = ['wind_u_component_10m', 'wind_v_component_10m', 'wind_gusts_10m'].
 const WAVES = ['wave', 'swell_wave', 'wind_wave'].flatMap((w) => [
   { name: `${w}_height`, scale: 50 }, { name: `${w}_period`, scale: 20 }, { name: `${w}_direction`, scale: 1 },
 ]);
+// surface current u (east) and v (north) in m/s, in Open-Meteo's steps of 0.05 m/s
+const CURRENTS = ['ocean_u_current', 'ocean_v_current'].map((name) => ({ name, scale: 20 }));
 // Must match WINDOW in the app's web/engine/models.js; the app checks rows and cols in the
 // manifest and reads Open-Meteo directly when they differ.
 const WINDOW = [38.4, 44.0, 0.0, 10.0];  // south, north, west, east
@@ -54,6 +59,10 @@ const MODELS = [
   model({ key: 'icon-eu', source: 'dwd_icon_eu', variables: WIND, srcLat0: 29.5, srcLon0: -23.5, dlat: 0.0625, srcNy: 657, srcNx: 1377, runHours: [0, 6, 12, 18] }),
   // runs at 00 and 12 UTC to +78 h; no land mask, land is nodata
   model({ key: 'ewam', source: 'dwd_ewam', variables: WAVES, srcLat0: 30.0, srcLon0: -10.5, dlat: 0.05, dlon: 0.1, srcNy: 721, srcNx: 526, mask: false }),
+  // Copernicus SMOC currents: one run a day (00 UTC, out around 12 UTC), 24 h of analysis before it
+  // and 240 h of forecast; no land mask, land is nodata. Row 0 is at 80° S and column 0 at 180° W, as
+  // in Copernicus' files (Open-Meteo's metadata puts the cells half a step further north-east).
+  model({ key: 'smoc', source: 'meteofrance_currents', variables: CURRENTS, srcLat0: -80, srcLon0: -180, dlat: 1 / 12, srcNy: 2041, srcNx: 4320, mask: false }),
 ];
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -245,7 +254,9 @@ async function main() {
   const manifest = old?.format === FORMAT ? old : { models: {} };
   let changed = !old || old.format !== FORMAT;
   const errors = [];
+  const only = process.env.MODELS?.split(',').filter(Boolean);
   for (const m of MODELS) {
+    if (only && !only.includes(m.key)) continue;
     try {
       if (await buildModel(m, manifest)) changed = true;
     } catch (e) {
@@ -257,7 +268,8 @@ async function main() {
     writeAtomic(file, JSON.stringify({
       format: FORMAT,
       generated: new Date().toISOString(),
-      attribution: 'Weather data by Open-Meteo.com (CC BY 4.0), from Météo-France AROME HD, DWD ICON-EU and DWD EWAM',
+      attribution: 'Weather data by Open-Meteo.com (CC BY 4.0), from Météo-France AROME HD, DWD ICON-EU and DWD EWAM; '
+        + 'currents generated using E.U. Copernicus Marine Service information (Mercator Ocean SMOC)',
       ...manifest,
     }));
     fs.writeFileSync(path.join(SITE, '.nojekyll'), '');
