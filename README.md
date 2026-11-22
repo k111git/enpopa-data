@@ -1,6 +1,6 @@
 # enpopa-data
 
-Prepared wind and waves for the [enpopa](https://github.com/k111git/enpopa) app, published on GitHub Pages at
+Prepared wind, waves and currents for the [enpopa](https://github.com/k111git/enpopa) app, published on GitHub Pages at
 <https://k111git.github.io/enpopa-data/>.
 
 The app's area is small, but Open-Meteo's files each cover all of France or Europe for one forecast hour,
@@ -12,6 +12,7 @@ here does that once per new run and publishes the result compactly:
 | AROME HD (Météo-France, 1.3 km) | 561 × 1001 | 52 | ~0.5 MB | ~26 MB |
 | ICON-EU (DWD, 7 km) | 91 × 161 | 93 | ~20 KB | ~2 MB |
 | EWAM waves (DWD, 0.05° × 0.1°) | 113 × 101 | 79 | ~40 KB | ~3 MB |
+| SMOC currents (Copernicus Marine, 1/12°) | 68 × 121 | 264 | ~5 KB | ~1.3 MB |
 
 The values are the same as on Open-Meteo, at the steps it stores them in:
 
@@ -19,13 +20,20 @@ The values are the same as on Open-Meteo, at the steps it stores them in:
 - **Waves** (EWAM, runs at 00 and 12 UTC to +78 h): height (0.02 m), period (0.05 s) and direction they come from (1°), for the
   total sea, the swell and the wind waves. Land is nodata. The app reads the total sea (the first three variables) for
   its wave layer, routing and calibration; swell and wind waves aren't used yet.
+- **Currents** (SMOC, `smoc`: Copernicus Marine's global Surface Merged Ocean Currents from Mercator Ocean, which
+  Open-Meteo mirrors as `meteofrance_currents`; one run a day at 00 UTC, out around 12 UTC, from 24 h before it
+  to +240 h): u and v of the surface current, eastward and northward (0.05 m/s). It is the total current at the
+  surface: the ocean model's, the tide's and the drift of the waves. Land is nodata. Row 0 of the source grid is at
+  80° S and column 0 at 180° W, as in Copernicus' own files; Open-Meteo's metadata puts the cells half a step
+  further north-east, which its values don't bear out (`lat0`/`lon0` in the manifest follow Copernicus). The app
+  uses them for its Currents layer and in routing.
 
 ## How it works
 
 `.github/workflows/prepare.yml` runs every 10 minutes (GitHub often starts scheduled jobs a few minutes late, and
 under load may skip one):
 
-1. `build.mjs` looks up the newest complete run of each model (AROME HD, ICON-EU, EWAM) on Open-Meteo's open-data bucket.
+1. `build.mjs` looks up the newest complete run of each model (AROME HD, ICON-EU, EWAM, SMOC) on Open-Meteo's open-data bucket.
 2. For a run it hasn't built yet, it reads the area (38.4–44.0° N, 0–10° E) out of every hour's `.om` file and writes one
    file per hour, plus the land mask once.
 3. If anything changed, or the live site differs from the built one, the site is published on GitHub Pages. The newest two runs of each model are kept, so a download
@@ -55,9 +63,11 @@ change it in the app's `web/engine/models.js` too.
 - Settings → Pages → Build and deployment → Source: **GitHub Actions**.
 - Run it once by hand: Actions → Prepare wind → Run workflow.
 
-Locally: `npm ci && node build.mjs site`.
+Locally: `npm ci && node build.mjs site`. `MODELS=smoc,ewam node build.mjs site` builds only those models.
 
 ## Licence
 
 The forecast data is from [Open-Meteo](https://open-meteo.com) (CC BY 4.0), based on Météo-France AROME HD,
-DWD ICON-EU and DWD EWAM.
+DWD ICON-EU and DWD EWAM. The currents are generated using E.U. Copernicus Marine Service information
+(GLOBAL_ANALYSISFORECAST_PHY_001_024, SMOC; [doi:10.48670/moi-00016](https://doi.org/10.48670/moi-00016)), whose
+licence allows free use, also commercial, with that attribution.
